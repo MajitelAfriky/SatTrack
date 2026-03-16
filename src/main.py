@@ -1,42 +1,108 @@
-# bno055_test.py Simple test program for MicroPython bno055 driver
-
-# Copyright (c) Peter Hinch 2019
-# Released under the MIT licence.
-
 import machine
 import time
-from bno055 import *
+from bno055_base import BNO055_BASE
 
-pin_sda = machine.Pin(8, machine.Pin.IN, machine.Pin.PULL_UP)
-pin_scl = machine.Pin(9, machine.Pin.IN, machine.Pin.PULL_UP)
- 
-# Tested configurations
-# Pyboard hardware I2C
-# i2c = machine.I2C(1)
+# Configuration
+CALIBRATION_FILE = "data/calibration.txt"
+I2C_ADDRESS = 0x29
 
-# Pico: hard I2C doesn't work without this patch
-# https://github.com/micropython/micropython/issues/8167#issuecomment-1013696765
-# i2c = machine.I2C(0, sda=machine.Pin(16), scl=machine.Pin(17))  # EIO error almost immediately
+# I2C and IMU setup
+i2c = machine.I2C(0, scl=machine.Pin(9), sda=machine.Pin(8))
+imu = BNO055_BASE(i2c, address=I2C_ADDRESS, crystal=False)
 
-# All platforms: soft I2C requires timeout >= 1000μs    
-i2c = machine.SoftI2C(0, pin_sda, pin_scl, timeout=100_000)
-time.sleep_ms(1000)
-# i2c = machine.SoftI2C(scl=machine.Pin(9), sda=machine.Pin(8), timeout=1_000)
-# ESP8266 soft I2C
-# i2c = machine.SoftI2C(scl=machine.Pin(2), sda=machine.Pin(0), timeout=100_000)
-# ESP32 hard I2C
-# i2c = machine.I2C(1, scl=machine.Pin(21), sda=machine.Pin(23))
-imu = BNO055(i2c, address=0x29, crystal=False)
-calibrated = False
+def load_calibration():
+    try:
+        with open(CALIBRATION_FILE, "rb") as f:
+            offsets = f.read()
+            if len(offsets) == 22:
+                # Switch to CONFIG_MODE (0x00)
+                i2c.writeto_mem(I2C_ADDRESS, 0x3D, b'\x00')
+                time.sleep(0.05)
+                
+                # Write 22 bytes of calibration data starting at register 0x55
+                i2c.writeto_mem(I2C_ADDRESS, 0x55, offsets)
+                time.sleep(0.05)
+                
+                # Switch back to NDOF_MODE (0x0C)
+                i2c.writeto_mem(I2C_ADDRESS, 0x3D, b'\x0C')
+                time.sleep(0.05)
+                return True
+    except OSError:
+        # File doesn't exist yet, which is fine on first boot
+        pass
+    return False
+
+def save_calibration():
+    try:
+        # Switch to CONFIG_MODE (0x00)
+        i2c.writeto_mem(I2C_ADDRESS, 0x3D, b'\x00')
+        time.sleep(0.05)
+        
+        # Read 22 bytes of calibration data starting at register 0x55
+        offsets = i2c.readfrom_mem(I2C_ADDRESS, 0x55, 22)
+        
+        # Switch back to NDOF_MODE (0x0C)
+        i2c.writeto_mem(I2C_ADDRESS, 0x3D, b'\x0C')
+        time.sleep(0.05)
+        
+        # Save to Pico's flash memory
+        with open(CALIBRATION_FILE, "wb") as f:
+            f.write(offsets)
+        return True
+    except Exception:
+        return False
+
+def create_bar(value, min_val, max_val, width=40):
+    # Constrain value to min/max boundaries
+    value = max(min_val, min(max_val, value))
+    # Calculate text position
+    pos = int((value - min_val) / (max_val - min_val) * width)
+    left_space = "-" * pos
+    right_space = "-" * (width - pos)
+    return f"[{left_space}O{right_space}]"
+
+# --- Main Program Initialization ---
+time.sleep(1) # Let the BNO055 boot up
+
+calibration_locked = load_calibration()
+
+# Clear the entire terminal screen once before starting the loop
+print('\033[2J', end='')
+
 while True:
-    time.sleep(1)
-    if not calibrated:
-        calibrated = imu.calibrated()
-        print('Calibration required: sys {} gyro {} accel {} mag {}'.format(*imu.cal_status()))
-    print('Temperature {}°C'.format(imu.temperature()))
-    print('Mag       x {:5.0f}    y {:5.0f}     z {:5.0f}'.format(*imu.mag()))
-    print('Gyro      x {:5.0f}    y {:5.0f}     z {:5.0f}'.format(*imu.gyro()))
-    print('Accel     x {:5.1f}    y {:5.1f}     z {:5.1f}'.format(*imu.accel()))
-    print('Lin acc.  x {:5.1f}    y {:5.1f}     z {:5.1f}'.format(*imu.lin_acc()))
-    print('Gravity   x {:5.1f}    y {:5.1f}     z {:5.1f}'.format(*imu.gravity()))
-    print('Heading     {:4.0f} roll {:4.0f} pitch {:4.0f}'.format(*imu.euler()))
+    # \033[H moves the cursor to the top-left corner instead of scrolling
+    print('\033[H', end='')
+    
+    # Read calibration status and orientation
+    sys_cal, gyro_cal, accel_cal, mag_cal = imu.cal_status()
+    heading, roll, pitch = imu.euler()
+    
+    # Fallback if sensor is busy and returns None
+    if heading is None: heading = 0.0
+    if roll is None: roll = 0.0
+    if pitch is None: pitch = 0.0
+    
+    # Calibration Lock Logic
+    if not calibration_locked:
+        if sys_cal == 3 and gyro_cal == 3 and accel_cal == 3 and mag_cal == 3:
+            save_calibration()
+            calibration_locked = True
+            
+    # Define UI status text
+    status_text = "LOCKED & SAVED" if calibration_locked else "CALIBRATING..."
+    
+    # Render Dashboard
+    print("=========================================")
+    print(f" CAL STATUS: SYS({sys_cal}) GYRO({gyro_cal}) ACC({accel_cal}) MAG({mag_cal})")
+    print(f" STATE: {status_text}")
+    print("=========================================")
+    print(f" HEADING (0 to 360) : {heading:>6.1f} deg")
+    print(f" {create_bar(heading, 0, 360)}")
+    print(f" ROLL (-90 to 90)   : {roll:>6.1f} deg")
+    print(f" {create_bar(roll, -90, 90)}")
+    print(f" PITCH (-180 to 180): {pitch:>6.1f} deg")
+    print(f" {create_bar(pitch, -180, 180)}")
+    print("=========================================")
+    
+    # Refresh rate (~10 FPS)
+    time.sleep(0.1)
