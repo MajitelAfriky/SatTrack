@@ -3,7 +3,7 @@ import time
 from bno055_base import BNO055_BASE
 
 # Configuration
-CALIBRATION_FILE = "data/calibration.txt"
+CALIBRATION_FILE = "/data/calibration.txt"
 I2C_ADDRESS = 0x29
 
 # I2C and IMU setup
