@@ -2,7 +2,7 @@ from machine import Pin
 import time
 
 class StepperMotor:
-    def __init__(self, step_pin, dir_pin, en_pin, steps_per_rev=200, microsteps=1):
+    def __init__(self, step_pin, dir_pin, en_pin, steps_per_rev=200, microsteps=8):
         # Zakladni parametry motoru a driveru
         self.steps_per_rev = steps_per_rev
         self.microsteps = microsteps
@@ -68,7 +68,7 @@ if __name__ == '__main__':
         
         while True:
             # Otoc o 90 stupnu rychlosti 60 otacek za minutu
-            motor.move_degrees(degrees=90, direction=1, rpm=150)
+            motor.move_degrees(degrees=90*49.3, direction=1, rpm=100)
             
             # Pidi pauza podle zadani (0.3 sekundy)
             time.sleep(0.3)
