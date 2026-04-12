@@ -1,63 +1,60 @@
 import sys
-import select
-import re
-import machine
-import time
+import uselect
 
-# --- NASTAVENÍ HARDWARU ---
-# Inicializace stavové LED na Raspberry Pi Pico W / Pico 2 W
-led = machine.Pin("LED", machine.Pin.OUT)
-led_timer = 0
-LED_ON_TIME_MS = 50 # Doba bliknutí v milisekundách
+az = 0.0
+el = 0.0
 
-# --- NASTAVENÍ PARSOVÁNÍ ---
-# Regulární výraz pro zachycení hodnot z protokolu Easycomm I
-# Zkompilováno předem pro vyšší výkon ve smyčce
-pattern = re.compile(r"AZ\s*([0-9\.]+).*?EL\s*([0-9\.]+)")
+poll = uselect.poll()
+poll.register(sys.stdin, uselect.POLLIN)
+buffer = ""
 
-# Nastavení pro neblokující čtení ze sériové linky (USB)
-poll = select.poll()
-poll.register(sys.stdin, select.POLLIN)
-
-def parse_easycomm_robust(command):
-    # Očištění vstupu a převod na velká písmena pro jistotu
-    command = command.strip().upper()
-    match = pattern.search(command)
-    
-    if match:
-        try:
-            azimuth = float(match.group(1))
-            elevation = float(match.group(2))
-            return azimuth, elevation
-        except ValueError:
-            return None, None
-            
-    return None, None
-
-# --- HLAVNÍ SMYČKA ---
 while True:
-    
-    # 1. ČÁST: Zpracování příchozích požadavků
-    if poll.poll(0):
-        line = sys.stdin.readline()
-        
-        if line:
-            az, el = parse_easycomm_robust(line)
-            
-            if az is not None and el is not None:
-                # -> PLATNÁ DATA PŘIJATA A ROZPARSOVÁNA <-
+    try:
+        events = poll.poll(15)
+        if events:
+            for file, event in events:
+                if event & uselect.POLLIN:
+                    char = sys.stdin.read(1)
+                    if char:
+                        buffer += char
+        else:
+            if buffer:
+                up_buffer = buffer.upper()
                 
-                # Rozsvítíme LED a zaznamenáme aktuální čas v milisekundách
-                led.value(1)
-                led_timer = time.ticks_ms()
+                # Zkontrolujeme, jestli zprava obsahuje jakakoliv cisla
+                has_digits = any(c.isdigit() for c in up_buffer)
                 
-                # ZDE ZAVOLÁŠ SVÉ FUNKCE PRO POHYB MOTORŮ
-                # move_motors(az, el)
-                pass
-
-    # 2. ČÁST: Správa hardwaru a časovačů
-    # Tato část se vyhodnocuje neustále a nečeká na příchozí data z USB
-    if led.value() == 1:
-        # Pokud LED svítí, zkontrolujeme, zda už uplynul požadovaný čas
-        if time.ticks_diff(time.ticks_ms(), led_timer) > LED_ON_TIME_MS:
-            led.value(0) # Čas vypršel, zhasneme LED
+                if not has_digits:
+                    # JE TO DOTAZ NA POZICI (Neobsahuje cisla, jen pismena AZ, EL nebo P)
+                    clean = up_buffer.replace('\n', '').replace('\r', '').strip()
+                    
+                    # Odpovime presne na to, na co se Hamlib 4.7.0 zrovna pta
+                    if clean == "AZ":
+                        odpoved = "AZ{}\n".format(int(az))
+                    elif clean == "EL":
+                        odpoved = "EL{}\n".format(int(el))
+                    else:
+                        # Fallback pro pripadne jine dotazy (napr. "P" nebo klasicke "AZ EL")
+                        odpoved = "AZ{} EL{}\n".format(int(az), int(el))
+                        
+                    # Surovy zapis bajtu a okamzite vykopnuti dat ven
+                    sys.stdout.buffer.write(odpoved.encode('utf-8'))
+                    sys.stdout.flush()
+                else:
+                    # JE TO PRIKAZ K POHYBU (Obsahuje ciselne souradnice)
+                    parts = up_buffer.replace('\n', ' ').replace('\r', ' ').split()
+                    for p in parts:
+                        if p.startswith("AZ"):
+                            # Precteme azimut (nahrazeni carky resi pripadnou ceskou lokalizaci systemu)
+                            try: az = float(p[2:].replace(',', '.'))
+                            except ValueError: pass
+                        elif p.startswith("EL"):
+                            try: el = float(p[2:].replace(',', '.'))
+                            except ValueError: pass
+                            
+                # Pamet cista a pripravena na dalsi krok
+                buffer = ""
+                
+    except Exception:
+        # Plynuly chod i pri neocekavane chybe
+        buffer = ""
