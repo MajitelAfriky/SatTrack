@@ -1,3 +1,7 @@
+# NON MICROPYTHON FILE - THIS IS A DEBUG TOOL FOR PC SIDE #
+#                                                         #
+#                                                         #
+# NON MICROPYTHON FILE - THIS IS A DEBUG TOOL FOR PC SIDE #
 import serial
 import time
 

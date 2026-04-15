@@ -53,7 +53,7 @@ if __name__ == '__main__':
         
         # Spusteni nekonecneho pohybu
         # Zmenseni delay_us zvysi rychlost. Pokud bude prilis male, motor nestihne odstartovat.
-        motor.run_continuous(direction=1, delay_us=200)
+        motor.run_continuous(direction=1, delay_us=1000)
         
     except KeyboardInterrupt:
         # Tento blok se vykona okamzite po stisku Ctrl+C

@@ -1,0 +1,10 @@
+{
+    "micropico.pyIgnore": [
+        ".vscode",
+        ".git",
+        "LICENCE",
+        "README.md",
+        "src/test",
+        "placeholder.txt"
+    ]
+}
